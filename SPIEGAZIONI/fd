@@ -1,0 +1,39 @@
+##1. fd
+Il primo esercizio riguarda i file descriptor di UNIX, che sono semplicemente interi che vanno a identificare un file aperto in un processo (puo essere un file, una pipe, una FIFO, tutto in UNIX è un file).
+Collegati alla remote shell con ssh vediamo subito il file flag di cui non possiamo leggere il contenuto poichè riservato all'utente root, e presente il programma fd.c:
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+char buf[32];
+int main(int argc, char* argv[], char* envp[]){
+	if(argc<2){
+		printf("pass argv[1] a number\n");
+		return 0;
+	}
+	int fd = atoi( argv[1] ) - 0x1234;
+	int len = 0;
+	len = read(fd, buf, 32);
+	if(!strcmp("LETMEWIN\n", buf)){
+		printf("good job :)\n");
+		system("/bin/cat flag");
+		exit(0);
+	}
+	printf("learn about Linux file IO\n");
+	return 0;
+
+}
+
+E il rispettivo eseguibile, il programma prende un argomento come input che viene convertito dalla funzione atoi (ascii to integer) in un intero, a quell'intero viene sottratto 0x1234 e il risultato sarà il nostro file descriptor, successivamente la funzione read prende 3 argomenti:
+	- il primo è il nostro file descriptor, che indica la stream da cui read leggera x byte;
+	- il secondo è il luogo di memoria dove il contenuto letto da read in fd verra depositato, in questo caso la stringa di 32 caratteri buf;
+	- il terzo e ultimo è un intero che indica il numero di byte che la funzione deve leggere da fd;
+In UNIX ad ogni "file" che viene aperto viene assegnato un file descriptor, tuttavia ci sono 3 valori che sono permanentemente legati a 3 stream:
+	- 0 va ad indicare stdin, ossia l'input da tastiera del terminale;
+	- 1 indica stdout, l'output a video del terminale;
+	- 2 indica stderr, anche questo output a video del terminale per gli errori;
+ci bastera quindi fornire al programma un numero che sottratto con 0x1234 faccia 0 (convertendo da esadecimale si ottiene 4660), potremo poi scrivere il nostro input nel terminale e i primi 32 caratteri di esso verranno salvati nella stringa buf.
+Il programma fa poi un confronto tramite la funzione strcmp, che confronta due stringhe e ritorna 0 se le due stringhe combaciano, un numero negativo se la prima stringa è minore della seconda e un numero positivo se viceversa.
+Basterà quindi scrivere LETMEWIN e premere invio (che produrra il carattere \n che indica a read di smettere di leggere) per soddisfare la condizione di strcmp e ottenere quindi il contenuto del file flag!
+
+

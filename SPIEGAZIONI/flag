@@ -1,0 +1,42 @@
+## 4. flag
+
+Il quarto esercizio recita il seguente testo:
+Papa brought me a packed present! let's open it.
+
+Download : http://pwnable.kr/bin/flag
+
+This is reversing task. all you need is binary
+
+Ci dice da subito che si tratta di un compito di reverse engineering, avremo bisogno quindi del nostro gdb o del vostro debugger di fiducia.
+Come prima cosa scarichiamo dal link fornito il file eseguibile flag tramite il comando `wget http://pwnable.kr/bin/flag` e usiamo il comando `chmod +x flag` per permetterci di eseguirlo.
+Eseguendo il file notiamo che non succede molto, viene solo stampata la stringa:
+"I will malloc() and strcpy the flag there. take it."
+Un suggerimento abbastanza diretto, ci dice che sta eseguendo la funzione malloc, quindi allocando memoria e poi facendo copiando la flag li tramite strcpy, ci basta quindi esaminare il corso del programma nel debugger e trovare la locazione di memoria dove viene copiata la nostra flag.
+
+Provando subito a far partire il programma in gdb pero si nota subito che non possiamo nè disassemblare il main nè impostare breakpoint su alcune delle funzioni che sappiamo vengono eseguite, suggerimento al fatto che il file probabilmente è stato compresso.
+
+Andando a esmainare le stringhe leggibili del file tramite il comando `strings flag` notiamo una dicitura interessante:
+"$Info: This file is packed with the UPX executable packer http://upx.sf.net $"
+Si capisce subito che il file è stato compresso tramite questo programma chiamato UPX, con una veloce ricerca si vede che, scaricando il programma tramite il vostro package manager di fiducia, il programma ovviamente offre anche la chance di decomprimere i programmi su cui è stato usato upx, quindi una volta scaricato il programma basta fare:
+"upx -d flag"
+E otterremo il vero file eseguibile flag, ora possiamo tornare nel nostro gdb e finalmente potremo andare a disassemblare il main e ad impostare breakpoint nelle funzioni che conosciamo, il main disassemblato compare cosi:
+   0x0000000000401164 <+0>:	push   %rbp
+   0x0000000000401165 <+1>:	mov    %rsp,%rbp
+   0x0000000000401168 <+4>:	sub    $0x10,%rsp
+   0x000000000040116c <+8>:	mov    $0x496658,%edi
+   0x0000000000401171 <+13>:	call   0x402080 <puts>
+   0x0000000000401176 <+18>:	mov    $0x64,%edi
+   0x000000000040117b <+23>:	call   0x4099d0 <malloc>
+   0x0000000000401180 <+28>:	mov    %rax,-0x8(%rbp)
+   0x0000000000401184 <+32>:	mov    0x2c0ee5(%rip),%rdx        # 0x6c2070 <flag>
+   0x000000000040118b <+39>:	mov    -0x8(%rbp),%rax
+   0x000000000040118f <+43>:	mov    %rdx,%rsi
+   0x0000000000401192 <+46>:	mov    %rax,%rdi
+   0x0000000000401195 <+49>:	call   0x400320
+   0x000000000040119a <+54>:	mov    $0x0,%eax
+   0x000000000040119f <+59>:	leave
+   0x00000000004011a0 <+60>:	ret
+
+Notiamo la system call del malloc e notiamo il commento, contenente un indirizzo esadecimale catalogato come <flag>, si capisce al volo che a quell'indirizzo strcpy mettera' la nostra flag.
+Impostiamo quindi un breakpoint sulla funzione strcpy e facciamo partire il programma, una volta arrivati al breakpoint facciamo next fino a che non usciamo dalla funzione e in seguito controlliamo il contenuto dell'indirizzo puntato da flag:
+esaminando l'indirizzo tramite "x 0x6c2070" notiamo che esso contiene un altro indirizzo 0x00496628, se poi andiamo ad esaminare anche quest'ultimo come una stringa tramite il comando "x/s 0x00496628" otterremo la nostra flag "UPX...? sounds like a delivery service :)". 

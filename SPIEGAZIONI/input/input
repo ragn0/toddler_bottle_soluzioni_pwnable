@@ -1,0 +1,325 @@
+## 7. input
+
+Settima challenge davvero difficile, MA bisogna dirlo una delle piú educative fino ad ora, questo esercizio puó tranquillamente sostituire qualsiasi guida su come si prende e fornisce l'input in un programma C, copre piú o meno tutti i metodi per fare ció ed é stata molto impegnativa.
+
+Il testo della challenge recita:
+"Mom? how can I pass my input to a computer program?
+
+ssh input2@pwnable.kr -p2222 (pw:guest)"
+
+Niente indizi o altro, soltanto che la challenge si tratterá di fornire gli input corretti, entriamo quindi nella shell remota e andiamo subito ad analizzare il codice del programma che ci é stato dato:
+
+input2@pwnable:/tmp/diocane$ cat input.c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+
+int main(int argc, char* argv[], char* envp[]){
+	printf("Welcome to pwnable.kr\n");
+	printf("Let's see if you know how to give input to program\n");
+	printf("Just give me correct inputs then you will get the flag :)\n");
+
+	// argv
+	if(argc != 100) return 0;
+	if(strcmp(argv['A'],"\x00")) return 0;
+	if(strcmp(argv['B'],"\x20\x0a\x0d")) return 0;
+	printf("Stage 1 clear!\n");	
+
+	// stdio
+	char buf[4];
+	read(0, buf, 4);
+	if(memcmp(buf, "\x00\x0a\x00\xff", 4)) return 0;
+	read(2, buf, 4);
+        if(memcmp(buf, "\x00\x0a\x02\xff", 4)) return 0;
+	printf("Stage 2 clear!\n");
+	
+	// env
+	if(strcmp("\xca\xfe\xba\xbe", getenv("\xde\xad\xbe\xef"))) return 0;
+	printf("Stage 3 clear!\n");
+
+	// file
+	FILE* fp = fopen("\x0a", "r");
+	if(!fp) return 0;
+	if( fread(buf, 4, 1, fp)!=1 ) return 0;
+	if( memcmp(buf, "\x00\x00\x00\x00", 4) ) return 0;
+	fclose(fp);
+	printf("Stage 4 clear!\n");	
+
+	// network
+	int sd, cd;
+	struct sockaddr_in saddr, caddr;
+	sd = socket(AF_INET, SOCK_STREAM, 0);
+	if(sd == -1){
+		printf("socket error, tell admin\n");
+		return 0;
+	}
+	saddr.sin_family = AF_INET;
+	saddr.sin_addr.s_addr = INADDR_ANY;
+	saddr.sin_port = htons( atoi(argv['C']) );
+	if(bind(sd, (struct sockaddr*)&saddr, sizeof(saddr)) < 0){
+		printf("bind error, use another port\n");
+    		return 1;
+	}
+	listen(sd, 1);
+	int c = sizeof(struct sockaddr_in);
+	cd = accept(sd, (struct sockaddr *)&caddr, (socklen_t*)&c);
+	if(cd < 0){
+		printf("accept error, tell admin\n");
+		return 0;
+	}
+	if( recv(cd, buf, 4, 0) != 4 ) return 0;
+	if(memcmp(buf, "\xde\xad\xbe\xef", 4)) return 0;
+	printf("Stage 5 clear!\n");
+
+	// here's your flag
+	system("/bin/cat flag");	
+	return 0;
+}
+
+Vediamo che il programma é diviso in 5 stage, tutti quanti catalogati da un commento:
+	- argv;
+	- stdio;
+	- env;
+	- file;
+	- network;
+Dovremo quindi passare dell'input al programma in maniera corretta tramite questi 5 mezzi per poi arrivare alla fine alla system call che ci fornirá la nostra flag.
+
+Partiamo dallo stage 1 argv:
+        // argv
+        if(argc != 100) return 0;
+        if(strcmp(argv['A'],"\x00")) return 0;
+        if(strcmp(argv['B'],"\x20\x0a\x0d")) return 0;
+        printf("Stage 1 clear!\n");
+
+Noi sappiamo che argv é il secondo argomento che prende la funzione main ed é un array di stringhe che rappresenta gli argomenti che passiamo al programma tramite terminale.
+In particolare osserviamo che per superare questo stage dobbiamo superare tre if statement:
+	- Dobbiamo fornire esattamente 100 argomenti (in realtá ne dovremo fornire 99 poiché la chiamata del programma é considerata essa stessa in argc e argv;
+	- argv['A'] deve essere un byte nullo "\x00", ossia l'argomento numero 'A', ossia numero 65 (poiché nell'alfabeto ASCII A equivale a 65) deve essere un byte nullo;
+	- argv['B'] deve essere "\x20\x0a\x0d";
+
+A primo impatto quindi ho pensato, scrivo 99 caratteri come argomenti e nel 65esimo metto \x00 e nel 66esimo metto \x20\x0a\x0d, se proviamo a fare ció tuttavia non avremo alcun successo.
+Questo perché Bash ignora del tutto i null byte che vengono passati come input tramite terminale ad un programma, perció nella posizione 65 in questo modo non avremo mai il null byte e non riusciremo mai a passare quell'if statement.
+Bisogna dunque trovare un altro modo per passare gli argomenti al programma senza passare per il terminale.
+Entra qui in gioco la funzione execve() in C, questa funzione prende 3 argomenti:
+	- il path del file da eseguire;
+	- gli argomenti da passare al programma;
+	- le variabili di ambiente che il programma userá.
+
+Grazie a questa funzione quindi io posso effettivamente passare argomenti al programma senza passare per bash, evitando quindi che il nostro null byte venga ignorato.
+Siccome nella directory in cui ci troviamo quando logghiamo all'interno della shell remota non abbiamo i permessi per creare file, creiamo una cartella in /tmp dove andremo a lavorare.
+
+Nella directory andiamo quindi a creare un file C dove andremo ad eseguire la funzione execve con i giusti argomenti:
+
+int main(){
+	char* arg[101];
+	for (int i = 0; i < 100; i++){
+	arg[i] = "A";
+}
+
+	arg[65] = "";
+	arg[66] = "\x20\x0a\x0d";
+	arg[100] = NULL;
+Cosí ho creato l'array che contiene tutti gli argomenti da passare sulla linea al programma, in bash non é possibile poiché non si puó passare un null byte \x00 poiché esso verrá semplicemente omesso e ignorato, se proviamo a passarlo vedremo che il terminale non ci dice nulla sul fatto che il null byte viene ignorato, questo perché nelle vecchie versioni di bash l'utente non viene avvisato, in quelle piú recenti viene anche emesso uno warning che ci dice che non é possibile passare un null byte, in tutte le versioni peró il carattere non viene preso.
+
+Abbiamo quindi creato un array che puó contenere 101 elementi poiché il primo elemento sará sempre il nome del programma e l'array che passiamo ad execve deve sempre terminare con un elemento NULL, altrimenti la chiamata non va a buon fine.
+Andiamo quindi ad eseguire il programma con execve, tralasciando per ora il significato del terzo argomento.
+
+	execve("/home/input2/input", arg, NULL);
+E avremo superato cosí il primo stage.
+
+Passiamo allo stage 2:
+
+	// stdio
+	char buf[4];
+	read(0, buf, 4);
+	if(memcmp(buf, "\x00\x0a\x00\xff", 4)) return 0;
+	read(2, buf, 4);
+        if(memcmp(buf, "\x00\x0a\x02\xff", 4)) return 0;
+	printf("Stage 2 clear!\n");
+
+Lo stage 2 é intitolato stdio, che sappiamo essere lo stream di input provenienti da tastiera e che quindi legge ció che l'utente scrive.
+Vediamo che anche qui dobbiamo superare due if statement preceduti da due chiamate della funzione read, una funzione che prende come argomenti:
+	- Il file descriptor della stream da cui vogliamo leggere i dati;
+	- Il puntatore dove andremo a memorizzare i dati letti;
+	- Il numero di byte da leggere.
+I file descriptor 0 e 2 sappiamo essere file descriptor fissi, legati rispettivamente ad stdin e stderr.
+Perció dobbiamo trovare un modo di scrivere all'interno di stdin e stderr i 4 byte di memoria che vengono confrontati nell'if statement, anche qui non potremo passarli da tastiera poiché sono contenuti dei byte nulli.
+Dobbiamo allora trovare un modo per mandare byte ai file descriptor 0 e 2, che sono sempre aperti, inizialmente ho pensato che bastasse semplicemente usare la funzione write() che scrive una certa quantitá di byte in un file descriptor, tuttavia ció non funzionava, perció cercando un po' ho scoperto l'utilizzo delle pipe per mandare dati e della funzione fork() che divide l'esecuzione del programma in un processo padre e un sottoprocesso figlio.
+
+La funzione pipe() prende un solo argomento, un puntatore di tipo int con 2 elementi di cui il primo diventerá la parte della pipe da cui leggeremo i dati al suo interno e il secondo quella a cui andremo a scrivere i dati all'interno della pipe, noi dovremo scrivere a stdin e stderr quindi avremo bisogno di due pipe:
+
+	int pipaIN[2];
+	int pipaERR[2];
+	// Creo i due array che conterranno i descriptor delle pipe di lettura e scrittura di stdin e stderr
+	if (pipe(pipaIN) || pipe(pipaERR)){
+	  perror("Pipa non buona");
+	  return -1;
+	} 
+ 
+Adesso andremo ad usare la funzione fork per dividere il programma in un processo padre e un processo figlio, la funzione fork ritorna -1 se qualcosa é andato storto, 1 se ci troviamo nel processo padre, 0 se ci troviamo nel sottoprocesso "bambino", useremo quindi uno switch statement per gestire i diversi casi:
+
+switch(fork()){ // Con fork vado a creare un sottoprocesso figlio al processo parente dove potró eseguire il programma input e duplicare le pipe da me create e alle quali scriveró gli input e portare l'input a stdin e stderr
+		case -1: // forca fallita dio salame
+		   perror("Forca fallita");
+		   return -1;
+		case 0: // fioletto
+		   close(pipaIN[1]);
+		   close(pipaERR[1]);
+		   dup2(pipaIN[0], STDIN_FILENO);
+		   dup2(pipaERR[0], STDERR_FILENO); // dup2 copia il vecchio file descriptor (il primo argomento), nel nuovo (il secondo argomento) chiudendo se necessario quello nuovo e poi riaprendolo.
+		   close(pipaIN[0]);
+		   close(pipaERR[0]);
+	           execve("/home/input2/input", arg, NULL); 
+		default: // Siamo nel processo padre dove scriviamo nelle nostre pipe gli input che vogliamo.
+		   close(pipaIN[0]);
+		   close(pipaERR[0]);
+		   write(pipaIN[1], "\x00\x0a\x00\xff", 4);   		   
+		   write(pipaERR[1], "\x00\x0a\x02\xff", 4);   		   
+		   wait(NULL);
+}
+
+Nel processo padre andremo a chiudere le pipe di lettura che non ci serviranno e andremo a scrivere tramite la funzione write nella parte di scrittura i nostri byte, poi tramite la funzione wait si interromperá l'esecuzione del processo padre e si passerá a quella del sottoprocesso, quando quest'ultima sará terminata si tornerá alla regolare esecuzione del programma.
+
+Entrati quindi nel sottoprocesso, chiudiamo le pipe di lettura che non ci serviranno e utilizziamo la funzione dup2, questa funzione in pratica copia un file descriptor e il suo contenuto all'interno di un altro file descriptor, chiudendo e riaprendo se necessario il nuovo file descriptor, chiudiamo poi le due pipe di lettura che ormai non ci servono piú ed eseguiamo il programma, cosí avremo superato anche il secondo stage.
+
+Gli stage 3 e 4 sono abbastanza semplici quindi li tratteremo insieme:
+
+// env
+	if(strcmp("\xca\xfe\xba\xbe", getenv("\xde\xad\xbe\xef"))) return 0;
+	printf("Stage 3 clear!\n");
+
+// file
+	FILE* fp = fopen("\x0a", "r");
+	if(!fp) return 0;
+	if( fread(buf, 4, 1, fp)!=1 ) return 0;
+	if( memcmp(buf, "\x00\x00\x00\x00", 4) ) return 0;
+	fclose(fp);
+	printf("Stage 4 clear!\n");	
+
+Il terzo é intitolato env, osserviamo che viene fatto un confronto tra i byte \xca\xfe\xba\xbe e il risultato della funzione getenv("\xde\xad\xbe\xef"), cercando cosa fa la funzione getenv, in pratica cerca tra le variabili di ambiente del programma la variabile il cui nome corrisponde a quello che prende come argomento e ritorna il contenuto della variabile, come avevamo detto prima la funzione execve prende come terzo argomento l'array che rappresenta le variabili di ambiente, gli elementi di tale array devono essere di tipo stringa e devono essere del tipo "nomevariabile=contenutovariabile", inoltre come per l'array di argomenti anche quello delle variabili di ambiente deve per forza terminare con NULL, basterá quindi creare tale array con l'elemento "\xde\xad\xbe\xef=\xca\xfe\xba\xbe" e passarlo come terzo argomento di execve e il terzo stage sará superato:
+
+char* const env_variables[] = {"\xde\xad\xbe\xef=\xca\xfe\xba\xbe", NULL};
+
+Il quarto stage invece tratta dell'input da file, vediamo che la funzione fopen apre il file "\x0a" in modalitá lettura, ne legge 4 byte che vengono depositati in buf e se quei 4 byte erano 4 null bytes allora passiamo anche il quarto stage.
+Chiaramente non possiamo creare a mano un file di nome "\x0a" e inserire al suo interno 4 null bytes, ma il linguaggio C puó:
+Basterá creare il file tramite la funzione fopen in modalitá wb, ossia di scrittura di bytes e scrivere con fwrite i 4 byte nulli nel sottoprocesso prima della chiamata di execve.
+
+		   FILE* stage4 = fopen("\x0a", "wb");
+		   fwrite("\x00\x00\x00\x00", 1, 4, stage4);
+		   fclose(stage4);
+
+E cosí avremo superato anche lo stage 4.
+
+Rimane quindi soltanto l'ultimo scoglio, il quinto stage:
+
+// network
+	int sd, cd;
+	struct sockaddr_in saddr, caddr;
+	sd = socket(AF_INET, SOCK_STREAM, 0);
+	if(sd == -1){
+		printf("socket error, tell admin\n");
+		return 0;
+	}
+	saddr.sin_family = AF_INET;
+	saddr.sin_addr.s_addr = INADDR_ANY;
+	saddr.sin_port = htons( atoi(argv['C']) );
+	if(bind(sd, (struct sockaddr*)&saddr, sizeof(saddr)) < 0){
+		printf("bind error, use another port\n");
+    		return 1;
+	}
+	listen(sd, 1);
+	int c = sizeof(struct sockaddr_in);
+	cd = accept(sd, (struct sockaddr *)&caddr, (socklen_t*)&c);
+	if(cd < 0){
+		printf("accept error, tell admin\n");
+		return 0;
+	}
+	if( recv(cd, buf, 4, 0) != 4 ) return 0;
+	if(memcmp(buf, "\xde\xad\xbe\xef", 4)) return 0;
+	printf("Stage 5 clear!\n");
+
+Intitolato network, infatti il quinto stage tratta di socket, vediamo che viene creato il socket sd, esso viene poi "bindato" ossia legato sulla rete locale che quindi avrá indirizzo ip 127.0.0.1 e sará legato alla porta htons(atoi(argv['C'])), questa funzione converte l'ordine in cui i byte vengono letti nella maniera in cui vengono letti dal network, il socket poi attende che delle connessioni vengano eseguite e riceve 4 byte, se quei 4 byte sono "\xde\xad\xbe\xef", allora passiamo anche questo stage e otteniamo la flag.
+Dovremo quindi creare un altro file a parte dove creeremo un socket, lo connetteremo al socket del programma e manderemo i 4 byte richiesti per completare la sfida.
+
+Per trovare la porta esatta dove andrá a trovarsi il socket a cui vorremo collegarci basterá provare un pó di numeri da mettere nella funzione htons, vedere quale ritorna un numero di porta utilizzabile e inserire quel numero nella posizione 67 degli argomenti, nel mio caso ho trovato che 6000 messo nella posizione 67, con la funzione htons diventa 28695, che é utilizzabile per questo lavoro, basterá quindi modificare oltre alle posizioni 65 e 66 di argv anche la posizione 67.
+
+Nel file che si occuperá del socket quindi ci connetteremo alla porta 28695 e scriveremo questi byte:
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+
+int main() {
+    int sockfd;
+    struct sockaddr_in server_addr;
+    char data[4] = {0xde, 0xad, 0xbe, 0xef};
+
+    sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd < 0) {
+        perror("Socket creation failed");
+        exit(EXIT_FAILURE);
+    }
+
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = 28695; 
+    server_addr.sin_addr.s_addr = INADDR_ANY; 
+
+    if (connect(sockfd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+        perror("Connection failed");
+        close(sockfd);
+        exit(EXIT_FAILURE);
+    }
+
+    if (send(sockfd, data, sizeof(data), 0) < 0) {
+        perror("Send failed");
+        close(sockfd);
+        exit(EXIT_FAILURE);
+    }
+
+    printf("4 bytes of data sent successfully\n");
+
+    close(sockfd);
+
+    return 0;
+}
+
+Benissimo, ora quando facciamo partire il programma principale notiamo che superiamo tutti i 4 stage, poi l'esecuzione sará come in stallo poiché il socket creato dal programma input.c attende connessioni da parte di altri socket. 
+Quando il programma entra in questa fase di stallo facciamo partire contemporaneamente l'altro programma che contiene il socket che andrá a connettersi, e finalmente vedremo che superiamo anche lo stage 5 e... niente! Nessuna flag viene stampata, perché?
+
+Chiaramente la flag non viene stampata poiché noi stiamo eseguendo il programma in una cartella dove il file flag non é contenuto, perció la system call system("/bin/cat flag") non troverá nessun file flag e perció non stamperá un bel niente, chiaramente non possiamo neanche copiare il file flag all'interno della cartella dove stiamo lavorando, perció dovremo utilizzare i link simbolici, ossia dovremo creare un riferimento al file flag all'interno della nostra cartella.
+Per fare ció basterá usare il comando link ln che creerá all'interno della nostra cartella in tmp un link al file flag nella cartella home:
+
+ln -s /home/input2/flag flag
+
+Cosí vediamo che ora é presente un file di nome flag nella nostra cartella, che peró é soltanto un riferimento al nostro flag nella cartella input2.
+Basterá quindi far ripartire i programmi come prima e stavolta la flag verrá stampata.
+
+Flag ottenuta: Mommy! I learned how to pass various input in Linux :)
+ 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

