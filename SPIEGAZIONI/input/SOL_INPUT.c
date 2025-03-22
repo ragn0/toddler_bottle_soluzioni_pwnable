@@ -33,14 +33,14 @@ int main(){
 		case 0: // fioletto
 		   close(pipaIN[1]);
 		   close(pipaERR[1]);
-		   FILE* piezz = fopen("\x0a", "wb");
-		   fwrite("\x00\x00\x00\x00", 1, 4, piezz);
-		   fclose(piezz);
+		   FILE* f = fopen("\x0a", "wb");
+		   fwrite("\x00\x00\x00\x00", 1, 4, f);
+		   fclose(f);
 		   dup2(pipaIN[0], STDIN_FILENO);
 		   dup2(pipaERR[0], STDERR_FILENO); // dup2 copia il vecchio file descriptor (il primo argomento), copiandolo nel nuovo (il secondo argomento) chiudendo se necessario quello nuovo e poi riaprendolo.
 		   close(pipaIN[0]);
 		   close(pipaERR[0]);
-	           execve("/home/input2/input", arg, env_variables); // execve esegue il programma in un processo che ha lo stesso process id di quello chiamante la funzione, il primo argomento é il luogo dove sta il programma, il secondo sono gli argomenti da passare al programma e env_variables alla fine mi passa le variabili di environment e quindi mi fa passare lo stage 3
+	           execve("/home/input2/input", arg, env_variables); // execve esegue il programma in un processo che ha lo stesso process id di quello chiamante la funzione, il primo argomento é il path dove sta il programma, il secondo sono gli argomenti da passare al programma e env_variables alla fine mi passa le variabili di environment e quindi mi fa passare lo stage 3
 		default: // Siamo nel processo padre dove scriviamo nelle nostre pipe gli input che vogliamo.
 		   close(pipaIN[0]);
 		   close(pipaERR[0]);
