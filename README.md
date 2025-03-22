@@ -2,7 +2,7 @@
 
 Soluzioni per le challenge capture the flag del sito pwnable.kr del tipo toddler's bottle in lingua italiana.
 
-Challenge ccompletate finora:
+Challenge completate finora:
   - fd
   - collision
   - bof
